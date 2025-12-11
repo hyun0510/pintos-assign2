@@ -86,7 +86,30 @@ palloc_get_multiple(enum palloc_flags flags, size_t page_cnt)
         return NULL;
 
     lock_acquire(&pool->lock);
-    page_idx = bitmap_scan_and_flip(pool->used_map, 0, page_cnt, false);
+    
+    switch(palloc_mode){
+        case PAL_FIRST_FIT:
+            page_idx = bitmap_scan_and_flip(pool->used_map, 0, page_cnt, false);
+            break;
+        case PAL_NEXT_FIT:
+            page_idx = bitmap_scan_and_flip_next_fit(pool->used_map, pool->next_fit_idx, page_cnt, false);
+            if(page_idx != BITMAP_ERROR){
+             pool->next_fit_idx = page_idx + page_cnt;
+             }
+            break;
+        case PAL_BEST_FIT:
+            page_idx = bitmap_scan_and_flip_best_fit(pool->used_map, page_cnt, false);
+        case PAL_BUDDY:
+            size_t buddy_cnt =1;
+            while(buddy_cnt < page_cnt){
+                buddy_cnt *= 2;
+            }            
+            page_idx = bitmap_scan_and_flip_buddy(pool->used_map, buddy_cnt, false);
+            break;
+        default:
+            page_idx = BITMAP_ERROR;
+            break;
+    }        
     lock_release(&pool->lock);
 
     if (page_idx != BITMAP_ERROR)
@@ -186,6 +209,8 @@ init_pool(struct pool *p, void *base, size_t page_cnt, const char *name)
     lock_init(&p->lock);
     p->used_map = bitmap_create_in_buf(page_cnt, base, bm_pages * PGSIZE);
     p->base = base + bm_pages * PGSIZE;
+    
+    p->next_fit_dix = 0;
 }
 
 /* Returns true if PAGE was allocated from POOL,
